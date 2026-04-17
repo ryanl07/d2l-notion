@@ -9,7 +9,8 @@
     <h1>D2L → Notion</h1>
 
     <div id="main-view">
-      <button id="sync-btn" class="primary-btn">Sync Assignments</button>
+      <button id="sync-btn" class="primary-btn">Sync Assignments (Brightspace)</button>
+      <button id="pearson-btn" class="primary-btn pearson-btn">Sync Assignments (Pearson)</button>
       <div id="status" class="status"></div>
       <div id="results" class="results"></div>
       <button id="settings-btn" class="secondary-btn">⚙️ Settings</button>
@@ -30,7 +31,7 @@
         Include Description field
       </label>
       <label>
-        Sync window
+        Sync window (Brightspace)
         <select id="sync-window">
           <option value="2w">Next 2 weeks</option>
           <option value="1m">Next month</option>
@@ -49,7 +50,7 @@
         <strong>How to get these:</strong><br>
         1. Go to <a href="https://www.notion.so/my-integrations" target="_blank">notion.so/my-integrations</a> and create an integration to get your token.<br>
         2. Open your Notion database, click "..." → "Connections" → select your integration.<br>
-        3. Copy the database ID from the URL (the 32-char string before the "?v=").
+        3. Copy the database ID from the URL (the 32-char string before "?v=").
       </p>
     </div>
   </div>

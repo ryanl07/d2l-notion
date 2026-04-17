@@ -48,6 +48,11 @@ function renderResults(results) {
   });
 }
 
+function formatWindow(w) {
+  const labels = { '2w': '2 weeks', '1m': '1 month', '3m': '3 months', '6m': '6 months', '1y': '1 year' };
+  return labels[w] || '3 months';
+}
+
 // ------------------------------------------------------------
 // Init: load saved settings
 // ------------------------------------------------------------
@@ -59,7 +64,7 @@ chrome.storage.local.get(['notionToken', 'databaseId', 'syncDescription', 'syncW
 });
 
 // ------------------------------------------------------------
-// Event handlers
+// Settings view
 // ------------------------------------------------------------
 $('settings-btn').addEventListener('click', () => {
   setSettingsStatus('');
@@ -117,6 +122,9 @@ $('test-btn').addEventListener('click', async () => {
   }
 });
 
+// ------------------------------------------------------------
+// Brightspace Sync
+// ------------------------------------------------------------
 $('sync-btn').addEventListener('click', async () => {
   const { notionToken, databaseId, syncDescription, syncWindow } = await chrome.storage.local.get(
     ['notionToken', 'databaseId', 'syncDescription', 'syncWindow']
@@ -139,7 +147,6 @@ $('sync-btn').addEventListener('click', async () => {
       return;
     }
 
-    // Have the content script detect the base URL and calendar org unit ID
     let response;
     try {
       response = await chrome.tabs.sendMessage(tab.id, { action: 'getCalendarInfo' });
@@ -154,7 +161,7 @@ $('sync-btn').addEventListener('click', async () => {
     }
 
     if (!response || !response.baseUrl || !response.ouId) {
-      setStatus('Could not detect calendar info. Open the Brightspace Calendar page and try again.', 'error');
+      setStatus('Could not detect calendar info. Open Brightspace and try again.', 'error');
       return;
     }
 
@@ -194,7 +201,87 @@ $('sync-btn').addEventListener('click', async () => {
   }
 });
 
-function formatWindow(w) {
-  const labels = { '2w': '2 weeks', '1m': '1 month', '3m': '3 months', '6m': '6 months', '1y': '1 year' };
-  return labels[w] || '3 months';
-}
+// ------------------------------------------------------------
+// Pearson Sync
+// ------------------------------------------------------------
+$('pearson-btn').addEventListener('click', async () => {
+  const { notionToken, databaseId, syncDescription } = await chrome.storage.local.get(
+    ['notionToken', 'databaseId', 'syncDescription']
+  );
+
+  if (!notionToken || !databaseId) {
+    setStatus('Please add your Notion token and database ID in Settings.', 'error');
+    return;
+  }
+
+  $('pearson-btn').disabled = true;
+  $('results').innerHTML = '';
+  setStatus('Scraping assignments from Pearson...', 'info');
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+
+    if (!tab || !tab.url || !tab.url.includes('mylabmastering.pearson.com')) {
+      setStatus('Please open a Pearson MyLab course page first.', 'error');
+      return;
+    }
+
+    // Get all frames in this tab — assignments may live inside an LTI iframe
+    const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id }).catch(() => null);
+    const frameIds = frames
+      ? frames.filter(f => !f.errorOccurred).map(f => f.frameId)
+      : [0];
+
+    // Ask each frame to scrape. Most will return 0 assignments; one will have them.
+    let assignments = [];
+    for (const frameId of frameIds) {
+      try {
+        const resp = await chrome.tabs.sendMessage(
+          tab.id,
+          { action: 'scrapePearson' },
+          { frameId }
+        );
+        if (resp && resp.assignments && resp.assignments.length > 0) {
+          assignments = assignments.concat(resp.assignments);
+        }
+      } catch (e) {
+        // Frame might not have our content script (e.g. about:blank or cross-origin) — skip
+      }
+    }
+
+    // Dedupe across frames
+    const seen = new Set();
+    assignments = assignments.filter(a => {
+      if (seen.has(a.name)) return false;
+      seen.add(a.name);
+      return true;
+    });
+
+    if (assignments.length === 0) {
+      setStatus('No current assignments found on this Pearson page.', 'error');
+      return;
+    }
+
+    setStatus(`Found ${assignments.length} assignment(s). Syncing to Notion...`, 'info');
+
+    const syncResult = await chrome.runtime.sendMessage({
+      action: 'syncToNotion',
+      assignments,
+      notionToken,
+      databaseId,
+      syncDescription
+    });
+
+    const results = (syncResult && syncResult.results) || [];
+    renderResults(results);
+    const ok = results.filter(r => r.status === 'created' || r.status === 'updated').length;
+    const skipped = results.filter(r => r.status === 'skipped').length;
+    const errors = results.filter(r => r.status === 'error').length;
+    setStatus(`✅ Synced ${ok} · Skipped ${skipped} · Errors ${errors}`, errors > 0 ? 'error' : 'success');
+  } catch (err) {
+    console.error(err);
+    setStatus('Error: ' + err.message, 'error');
+  } finally {
+    $('pearson-btn').disabled = false;
+  }
+});

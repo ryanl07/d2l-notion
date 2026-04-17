@@ -1,13 +1,14 @@
 {
   "manifest_version": 3,
   "name": "D2L → Notion Sync",
-  "version": "1.2",
-  "description": "Sync D2L Brightspace assignments to your Notion database.",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "version": "1.3",
+  "description": "Sync D2L Brightspace and Pearson MyLab assignments to your Notion database.",
+  "permissions": ["storage", "activeTab", "scripting", "webNavigation"],
   "host_permissions": [
     "https://*.brightspace.com/*",
     "https://*.desire2learn.com/*",
     "https://*.d2l.com/*",
+    "https://mylabmastering.pearson.com/*",
     "https://api.notion.com/*"
   ],
   "action": {
@@ -22,9 +23,11 @@
       "matches": [
         "https://*.brightspace.com/*",
         "https://*.desire2learn.com/*",
-        "https://*.d2l.com/*"
+        "https://*.d2l.com/*",
+        "https://mylabmastering.pearson.com/*"
       ],
-      "js": ["content.js"]
+      "js": ["content.js"],
+      "all_frames": true
     }
   ]
 }

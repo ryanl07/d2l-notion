@@ -18,6 +18,8 @@ h2 { font-size: 15px; margin-bottom: 10px; }
 }
 .primary-btn:hover { background: #1a6fc9; }
 .primary-btn:disabled { background: #555; cursor: not-allowed; }
+.pearson-btn { background: #0077c8; margin-top: 8px; }
+.pearson-btn:hover { background: #005a99; }
 
 .secondary-btn {
   width: 100%;

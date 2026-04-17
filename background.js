@@ -5,6 +5,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch(err => sendResponse({ error: err.message }));
     return true;
   }
+  if (msg.action === 'syncToNotion') {
+    syncAll(msg.assignments, msg.notionToken, msg.databaseId, msg.syncDescription)
+      .then(results => sendResponse({ results }))
+      .catch(err => sendResponse({ results: [{ status: 'error', name: 'SYNC', error: err.message }] }));
+    return true;
+  }
   if (msg.action === 'testNotion') {
     testNotionConnection(msg.notionToken, msg.databaseId)
       .then(res => sendResponse(res))
@@ -13,10 +19,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-// --- MAIN PIPELINE: fetch multiple calendar pages, parse, dedupe, sync ---
+// -----------------------------------------------------------
+// BRIGHTSPACE: fetch multiple months and sync
+// -----------------------------------------------------------
 async function fetchAndSync({ baseUrl, ouId, syncWindow, notionToken, databaseId, syncDescription }) {
   const monthsToFetch = getMonthsForWindow(syncWindow || '3m');
-  console.log(`[D2L→Notion] Fetching ${monthsToFetch.length} month(s) of calendar data from ${baseUrl}/d2l/le/calendar/${ouId}`);
+  console.log(`[D2L→Notion] Fetching ${monthsToFetch.length} month(s) from ${baseUrl}/d2l/le/calendar/${ouId}`);
 
   const fetches = monthsToFetch.map(d => fetchCalendarMonth(baseUrl, ouId, d));
   const responses = await Promise.all(fetches);
@@ -30,12 +38,8 @@ async function fetchAndSync({ baseUrl, ouId, syncWindow, notionToken, databaseId
     }
     const parsed = parseCalendarHtml(response.html);
     console.log(`[D2L→Notion] Month ${i + 1}: parsed ${parsed.length} events`);
-    if (parsed.length === 0 && response.html.length > 100) {
-      console.log(`[D2L→Notion] Month ${i + 1} HTML sample (first 2000 chars):`, response.html.slice(0, 2000));
-    }
     allAssignments.push(...parsed);
   }
-  console.log(`[D2L→Notion] Total events before dedupe: ${allAssignments.length}`);
 
   const seen = new Set();
   const deduped = allAssignments.filter(a => {
@@ -47,7 +51,6 @@ async function fetchAndSync({ baseUrl, ouId, syncWindow, notionToken, databaseId
   console.log(`[D2L→Notion] After dedupe: ${deduped.length} unique assignments`);
 
   if (deduped.length === 0) return [];
-
   return await syncAll(deduped, notionToken, databaseId, syncDescription);
 }
 
@@ -88,7 +91,7 @@ async function fetchCalendarMonth(baseUrl, ouId, date) {
     let body = await res.text();
     body = body.replace(/^while\(1\);\s*/, '');
     const data = JSON.parse(body);
-    const html = data?.Payload?.Html;
+    const html = data && data.Payload && data.Payload.Html;
     if (!html) {
       console.warn('[D2L→Notion] No Html in payload');
       return null;
@@ -101,72 +104,11 @@ async function fetchCalendarMonth(baseUrl, ouId, date) {
   }
 }
 
-// Parse events from the D2L calendar JSON API response
-function parseApiEvents(data) {
-  if (!data) return [];
-  // API response is typically an array of event objects, but sometimes wrapped
-  const events = Array.isArray(data) ? data
-               : Array.isArray(data.Items) ? data.Items
-               : Array.isArray(data.Objects) ? data.Objects
-               : [];
-
-  const results = [];
-  for (const ev of events) {
-    // D2L event object has many possible shapes depending on version. Common fields:
-    //   Title / EventName / Name
-    //   StartDateTime / StartDate / start
-    //   EndDateTime / EndDate / end
-    //   OrgUnitName / CourseName — the course/org unit name
-    //   Description / Content
-    //   CategoryName / EventType — e.g. "Due Date", "Availability End"
-    const name = ev.Title || ev.EventName || ev.Name || ev.title || null;
-    if (!name) continue;
-
-    const startRaw = ev.StartDateTime || ev.StartDate || ev.start || ev.DueDate || null;
-    const endRaw = ev.EndDateTime || ev.EndDate || ev.end || null;
-    const useDate = endRaw || startRaw;
-    if (!useDate) continue;
-
-    const parsed = new Date(useDate);
-    if (isNaN(parsed)) continue;
-    const dueDate = parsed.toISOString();
-
-    const courseRaw = ev.OrgUnitName || ev.CourseName || ev.OrgUnit || ev.ParentOrgUnitName || '';
-    const course = cleanCourseName(courseRaw) || 'Unknown';
-
-    const category = (ev.CategoryName || ev.EventType || ev.Type || '').toString();
-    // Skip "Start Date" / "Available" events — only want actual due dates
-    if (/^(start|available$)/i.test(category)) continue;
-
-    // Append the event type to the name if it's a due/availability variant, to match
-    // the behavior we want (e.g. "Homework 6 - Due" is distinct from "Homework 6 - Availability Ends")
-    // But only if the name doesn't already include it.
-    let finalName = name.trim();
-
-    const description = (ev.Description || ev.Content || '').toString().slice(0, 1500);
-
-    results.push({
-      name: finalName,
-      course,
-      dueDate,
-      description,
-      status: 'Not started'
-    });
-  }
-  return results;
-}
-
-// --- CALENDAR HTML PARSING (service-worker compatible) ---
-// Each event has:
-//   <a ... title="Homework 6 - Due" class="d2l-offscreen">
-//   <div class="d2l-le-calendar-dot-circle ..." title="Spring 2026 CS 19300 - Merge">
-//   <div class="d2l-textblock ...">Apr 17, 2026 11:59 PM</div>
-// We extract these three pieces per event using title attributes as anchors.
 function parseCalendarHtml(html) {
   const results = [];
   const processed = new Set();
 
-  // Find all event title links: <a ... title="Event Name - EventType" ... class="d2l-offscreen">
+  // Each event has: <a ... title="Homework 6 – Due" ... class="d2l-offscreen">
   const titleRegex = /<a[^>]+title="([^"]+)"[^>]*class="d2l-offscreen"/gi;
 
   let titleMatch;
@@ -175,28 +117,24 @@ function parseCalendarHtml(html) {
     if (processed.has(fullTitle)) continue;
     processed.add(fullTitle);
 
-    // Parse event name and type from the title
-    // NOTE: D2L uses en-dash (–) not hyphen (-) between name and event type
-    const evMatch = fullTitle.match(/^(.+?)\s+[\-\u2013\u2014]\s+(Due|Availability Ends|Available Until|Submission|End Date|Start Date|Ends|Starts|Available)\s*$/i);
+    // D2L uses en-dash (–) not hyphen (-) between name and event type
+    const evMatch = fullTitle.match(
+      /^(.+?)\s+[\-\u2013\u2014]\s+(Due|Availability Ends|Available Until|Submission|End Date|Start Date|Ends|Starts|Available)\s*$/i
+    );
     if (!evMatch) continue;
 
     const name = evMatch[1].trim();
     const eventType = evMatch[2].trim();
-
-    // Skip "Available" / "Start" events
     if (/^(available|start|starts)$/i.test(eventType)) continue;
 
-    // Look in the ~2000 chars AFTER this match for the course and date
     const searchRegion = html.slice(titleMatch.index, titleMatch.index + 3000);
 
-    // Extract course from dot-circle title
     const courseMatch = searchRegion.match(/d2l-le-calendar-dot-circle[^>]*title="([^"]+)"/i);
     let course = 'Unknown';
     if (courseMatch) {
       course = cleanCourseName(decodeHtmlEntities(courseMatch[1])) || 'Unknown';
     }
 
-    // Extract date — look for text like "Apr 17, 2026 11:59 PM" inside d2l-textblock divs
     const datePattern = /([A-Z][a-z]{2,8}\s+\d{1,2},\s+\d{4}\s+\d{1,2}:\d{2}\s*[AP]M)/i;
     const dateMatch = searchRegion.match(datePattern);
     if (!dateMatch) continue;
@@ -213,7 +151,7 @@ function parseCalendarHtml(html) {
     });
   }
 
-  console.log(`[D2L→Notion] Parser found ${results.length} events from HTML`);
+  console.log(`[D2L→Notion] Parser found ${results.length} events`);
   return results;
 }
 
@@ -237,7 +175,9 @@ function cleanCourseName(raw) {
   return s;
 }
 
-// --- NOTION CONNECTION TEST ---
+// -----------------------------------------------------------
+// NOTION SYNC
+// -----------------------------------------------------------
 async function testNotionConnection(token, databaseId) {
   const dbRes = await fetch(`https://api.notion.com/v1/databases/${databaseId}`, {
     method: 'GET',
@@ -246,10 +186,10 @@ async function testNotionConnection(token, databaseId) {
   const dbData = await dbRes.json();
   if (!dbRes.ok) {
     if (dbRes.status === 401) {
-      return { success: false, error: 'Invalid Notion token. Make sure it\'s copied correctly.' };
+      return { success: false, error: 'Invalid Notion token.' };
     }
     if (dbRes.status === 404) {
-      return { success: false, error: 'Database not found. Check the ID, and make sure your integration is connected to the database (open the DB → "..." → Connections).' };
+      return { success: false, error: 'Database not found. Make sure your integration is connected to the database.' };
     }
     return { success: false, error: `Notion error (${dbRes.status}): ${dbData.message || 'Unknown'}` };
   }
@@ -261,7 +201,7 @@ async function testNotionConnection(token, databaseId) {
     name: testName,
     course: 'Extension Test',
     dueDate: new Date().toISOString().split('T')[0],
-    description: 'Test entry created by D2L → Notion Sync to verify connection. Safe to delete.',
+    description: 'Test entry. Safe to delete.',
     status: 'Not started'
   };
 
@@ -269,14 +209,10 @@ async function testNotionConnection(token, databaseId) {
     await createPage(testAssignment, token, databaseId, true, dbData.properties);
     return { success: true, testName };
   } catch (err) {
-    return {
-      success: false,
-      error: `Connected, but couldn't create entry: ${err.message}.`
-    };
+    return { success: false, error: `Connected, but couldn't create entry: ${err.message}.` };
   }
 }
 
-// --- NOTION SYNC ---
 async function syncAll(assignments, token, databaseId, includeDescription) {
   const schema = await getSchema(token, databaseId);
 
@@ -286,7 +222,7 @@ async function syncAll(assignments, token, databaseId, includeDescription) {
       if (!a.name) { results.push({ ...a, status: 'skipped' }); continue; }
       const existing = await findExisting(a.name, token, databaseId);
       if (existing) {
-        await updatePage(existing.id, a, token, includeDescription, schema);
+        await updatePage(existing.id, a, token, includeDescription, schema, databaseId);
         results.push({ ...a, status: 'updated' });
       } else {
         await createPage(a, token, databaseId, includeDescription, schema);
@@ -340,10 +276,10 @@ async function createPage(a, token, databaseId, includeDescription, schema) {
   return data;
 }
 
-async function updatePage(pageId, a, token, includeDescription, schema) {
+async function updatePage(pageId, a, token, includeDescription, schema, databaseId) {
   if (!schema) schema = await getSchema(token, databaseId);
   const props = buildProperties(a, includeDescription, schema);
-  delete props.Status;
+  delete props.Status; // preserve user's progress
   const res = await fetch(`https://api.notion.com/v1/pages/${pageId}`, {
     method: 'PATCH',
     headers: notionHeaders(token),
