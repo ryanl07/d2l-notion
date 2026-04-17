@@ -68,7 +68,7 @@ label {
   font-size: 12px;
   color: #bbb;
 }
-input[type="text"], input[type="password"] {
+input[type="text"], input[type="password"], select {
   width: 100%;
   padding: 8px;
   margin-top: 4px;
@@ -78,6 +78,7 @@ input[type="text"], input[type="password"] {
   color: #eee;
   font-size: 13px;
 }
+select { cursor: pointer; }
 .checkbox-row { display: flex; align-items: center; gap: 6px; }
 .checkbox-row input { margin: 0; }
 .btn-row { display: flex; gap: 8px; }

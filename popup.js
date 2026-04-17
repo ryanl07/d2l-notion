@@ -51,10 +51,11 @@ function renderResults(results) {
 // ------------------------------------------------------------
 // Init: load saved settings
 // ------------------------------------------------------------
-chrome.storage.local.get(['notionToken', 'databaseId', 'syncDescription'], (data) => {
+chrome.storage.local.get(['notionToken', 'databaseId', 'syncDescription', 'syncWindow'], (data) => {
   if (data.notionToken) $('notion-token').value = data.notionToken;
   if (data.databaseId) $('database-id').value = data.databaseId;
   $('sync-description').checked = !!data.syncDescription;
+  if (data.syncWindow) $('sync-window').value = data.syncWindow;
 });
 
 // ------------------------------------------------------------
@@ -74,8 +75,9 @@ $('save-btn').addEventListener('click', () => {
   const notionToken = $('notion-token').value.trim();
   const databaseId = $('database-id').value.trim().replace(/-/g, '').split('?')[0];
   const syncDescription = $('sync-description').checked;
+  const syncWindow = $('sync-window').value;
 
-  chrome.storage.local.set({ notionToken, databaseId, syncDescription }, () => {
+  chrome.storage.local.set({ notionToken, databaseId, syncDescription, syncWindow }, () => {
     setSettingsStatus('Settings saved!', 'success');
     setTimeout(() => {
       setSettingsStatus('');
@@ -116,8 +118,8 @@ $('test-btn').addEventListener('click', async () => {
 });
 
 $('sync-btn').addEventListener('click', async () => {
-  const { notionToken, databaseId, syncDescription } = await chrome.storage.local.get(
-    ['notionToken', 'databaseId', 'syncDescription']
+  const { notionToken, databaseId, syncDescription, syncWindow } = await chrome.storage.local.get(
+    ['notionToken', 'databaseId', 'syncDescription', 'syncWindow']
   );
 
   if (!notionToken || !databaseId) {
@@ -127,7 +129,7 @@ $('sync-btn').addEventListener('click', async () => {
 
   $('sync-btn').disabled = true;
   $('results').innerHTML = '';
-  setStatus('Scraping assignments from D2L...', 'info');
+  setStatus('Reading calendar info...', 'info');
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -137,10 +139,10 @@ $('sync-btn').addEventListener('click', async () => {
       return;
     }
 
-    // Try messaging the content script. If it's not loaded, inject it manually.
+    // Have the content script detect the base URL and calendar org unit ID
     let response;
     try {
-      response = await chrome.tabs.sendMessage(tab.id, { action: 'scrape' });
+      response = await chrome.tabs.sendMessage(tab.id, { action: 'getCalendarInfo' });
     } catch (err) {
       console.log('Content script not loaded, injecting manually...');
       await chrome.scripting.executeScript({
@@ -148,31 +150,37 @@ $('sync-btn').addEventListener('click', async () => {
         files: ['content.js']
       });
       await new Promise(r => setTimeout(r, 300));
-      response = await chrome.tabs.sendMessage(tab.id, { action: 'scrape' });
+      response = await chrome.tabs.sendMessage(tab.id, { action: 'getCalendarInfo' });
     }
 
-    if (!response || !response.assignments) {
-      setStatus('Could not read page. Refresh Brightspace and try again.', 'error');
+    if (!response || !response.baseUrl || !response.ouId) {
+      setStatus('Could not detect calendar info. Open the Brightspace Calendar page and try again.', 'error');
       return;
     }
 
-    const assignments = response.assignments;
-    if (assignments.length === 0) {
-      setStatus('No assignments found. Make sure you\'re on the Calendar page.', 'error');
-      return;
-    }
-
-    setStatus(`Found ${assignments.length} assignment(s). Syncing to Notion...`, 'info');
+    setStatus(`Fetching assignments (window: ${formatWindow(syncWindow)})...`, 'info');
 
     const syncResult = await chrome.runtime.sendMessage({
-      action: 'syncToNotion',
-      assignments,
+      action: 'fetchAndSync',
+      baseUrl: response.baseUrl,
+      ouId: response.ouId,
+      syncWindow: syncWindow || '3m',
       notionToken,
       databaseId,
       syncDescription
     });
 
+    if (syncResult && syncResult.error) {
+      setStatus('Error: ' + syncResult.error, 'error');
+      return;
+    }
+
     const results = (syncResult && syncResult.results) || [];
+    if (results.length === 0) {
+      setStatus('No assignments found in the selected window.', 'error');
+      return;
+    }
+
     renderResults(results);
     const ok = results.filter(r => r.status === 'created' || r.status === 'updated').length;
     const skipped = results.filter(r => r.status === 'skipped').length;
@@ -185,3 +193,8 @@ $('sync-btn').addEventListener('click', async () => {
     $('sync-btn').disabled = false;
   }
 });
+
+function formatWindow(w) {
+  const labels = { '2w': '2 weeks', '1m': '1 month', '3m': '3 months', '6m': '6 months', '1y': '1 year' };
+  return labels[w] || '3 months';
+}
