@@ -33,23 +33,53 @@ function scrapeListView() {
 
   for (const row of rows) {
     const text = (row.innerText || row.textContent || '').replace(/\s+/g, ' ').trim();
-    if (!text || text.length < 10 || text.length > 500) continue;
+    if (!text || text.length < 10 || text.length > 1000) continue;
 
-    const match = text.match(/^(.+?)\s+-\s+(Due|Availability Ends|Available Until|Submission|End Date|Start Date|Ends|Starts)\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4}(?:\s+\d{1,2}:\d{2}\s*[AP]M)?)/i);
-    if (!match) continue;
+    // Brightspace List view rows look like:
+    //   "Asynchronous Quiz 20 - Availability Ends Apr 19, 2026 11:59 PM"
+    // OR (when the row also contains course info in the text):
+    //   "Asynchronous Quiz 20 - Availability Ends Spring 2026 EAPS 105 DIS - Merge Asynchronous Quiz 20"
+    //
+    // We look for the FIRST event-type keyword ("Due", "Availability Ends", etc.)
+    // and split around it. Then extract date/time from whatever comes after.
 
-    const name = match[1].trim();
-    const eventType = match[2].trim();
-    const dateStr = match[3].trim();
+    const eventTypeRegex = /\s+-\s+(Due|Availability Ends|Available Until|Submission|End Date|Start Date|Ends|Starts)\b/i;
+    const evMatch = text.match(eventTypeRegex);
+    if (!evMatch) continue;
+
+    const name = text.slice(0, evMatch.index).trim();
+    const eventType = evMatch[1];
+    const afterEventType = text.slice(evMatch.index + evMatch[0].length).trim();
 
     if (/^(start|starts)/i.test(eventType)) continue;
+    if (!name || name.length < 2 || name.length > 200) continue;
 
+    // Find the date within whatever comes after the event type.
+    // Pattern: "Month Day, Year [Time AM/PM]" — may be preceded by course info.
+    const dateRegex = /([A-Za-z]+\s+\d{1,2},?\s+\d{4}(?:\s+\d{1,2}:\d{2}\s*[AP]M)?)/i;
+    const dateMatch = afterEventType.match(dateRegex);
+    if (!dateMatch) continue;
+
+    const dateStr = dateMatch[1].trim();
     const parsed = new Date(dateStr);
     if (isNaN(parsed)) continue;
 
     const hasTime = /\d{1,2}:\d{2}/.test(dateStr);
     const dueDate = hasTime ? parsed.toISOString() : parsed.toISOString().split('T')[0];
 
+    // Anything between the event type and the date MIGHT be course info.
+    // Example: "Spring 2026 EAPS 105 DIS - Merge" appearing before the date.
+    const beforeDate = afterEventType.slice(0, dateMatch.index).trim();
+    const afterDate = afterEventType.slice(dateMatch.index + dateMatch[0].length).trim();
+    const courseCandidates = [beforeDate, afterDate];
+    let inlineCourse = null;
+    for (const candidate of courseCandidates) {
+      if (!candidate) continue;
+      const cleaned = cleanCourseName(candidate);
+      if (cleaned) { inlineCourse = cleaned; break; }
+    }
+
+    // Capture the event detail link for fetching course info if not inline
     const link = row.tagName === 'A'
       ? row.href
       : (row.querySelector && row.querySelector('a[href*="event"]') || {}).href
@@ -57,13 +87,14 @@ function scrapeListView() {
 
     results.push({
       name,
-      course: 'Unknown',
+      course: inlineCourse || 'Unknown',
       dueDate,
       description: '',
       status: 'Not started',
       _eventUrl: link || null
     });
   }
+
   return results;
 }
 
