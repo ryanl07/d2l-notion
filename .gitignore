@@ -1,0 +1,41 @@
+# Packaged extension files (NEVER commit the .pem — it's your private signing key)
+*.crx
+*.pem
+
+# Secrets and local config
+.env
+.env.local
+secrets.json
+config.local.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Linux
+*~
+.directory
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Logs and temp files
+*.log
+*.tmp
+npm-debug.log*
+yarn-debug.log*
+
+# Node
+node_modules/
+package-lock.json
