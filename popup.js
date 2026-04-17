@@ -96,10 +96,9 @@ async function scrapePearsonFromFrames(tabId, frameIds) {
 async function scrapePearsonAssignments(tabId) {
   const frameIds = await getFrameIds(tabId);
 
-  let firstPass = await scrapePearsonFromFrames(tabId, frameIds);
+  const firstPass = await scrapePearsonFromFrames(tabId, frameIds);
   if (firstPass.assignments.length > 0) return firstPass.assignments;
 
-  // If content scripts were missing (common after extension reload), inject and retry.
   if (firstPass.responses === 0 || firstPass.errors > 0) {
     try {
       for (const frameId of frameIds) {
@@ -109,7 +108,7 @@ async function scrapePearsonAssignments(tabId) {
             files: ['content.js']
           });
         } catch (e) {
-          // Some frames are not injectable (cross-origin/about:blank). Ignore and continue.
+          // Some frames (about:blank, cross-origin) can't be injected
         }
       }
       await new Promise(r => setTimeout(r, 300));
@@ -124,7 +123,7 @@ async function scrapePearsonAssignments(tabId) {
 }
 
 // ------------------------------------------------------------
-// Init: load saved settings
+// Init
 // ------------------------------------------------------------
 chrome.storage.local.get(['notionToken', 'databaseId', 'syncDescription', 'syncWindow'], (data) => {
   if (data.notionToken) $('notion-token').value = data.notionToken;
@@ -181,12 +180,13 @@ $('test-btn').addEventListener('click', async () => {
     });
 
     if (result && result.success) {
-      setSettingsStatus(`✅ Connected! Created test entry "${result.testName}". Feel free to delete it.`, 'success');
+      setSettingsStatus('Connected! Created test entry "' + result.testName + '". Feel free to delete it.', 'success');
     } else {
-      setSettingsStatus('❌ ' + ((result && result.error) || 'Unknown error'), 'error');
+      const errMsg = (result && result.error) ? result.error : 'Unknown error';
+      setSettingsStatus('Error: ' + errMsg, 'error');
     }
   } catch (err) {
-    setSettingsStatus('❌ ' + err.message, 'error');
+    setSettingsStatus('Error: ' + err.message, 'error');
   } finally {
     $('test-btn').disabled = false;
   }
@@ -235,7 +235,7 @@ $('sync-btn').addEventListener('click', async () => {
       return;
     }
 
-    setStatus(`Fetching assignments (window: ${formatWindow(syncWindow)})...`, 'info');
+    setStatus('Fetching assignments (window: ' + formatWindow(syncWindow) + ')...', 'info');
 
     const syncResult = await chrome.runtime.sendMessage({
       action: 'fetchAndSync',
@@ -262,7 +262,7 @@ $('sync-btn').addEventListener('click', async () => {
     const ok = results.filter(r => r.status === 'created' || r.status === 'updated').length;
     const skipped = results.filter(r => r.status === 'skipped').length;
     const errors = results.filter(r => r.status === 'error').length;
-    setStatus(`✅ Synced ${ok} · Skipped ${skipped} · Errors ${errors}`, errors > 0 ? 'error' : 'success');
+    setStatus('Synced ' + ok + ' / Skipped ' + skipped + ' / Errors ' + errors, errors > 0 ? 'error' : 'success');
   } catch (err) {
     console.error(err);
     setStatus('Error: ' + err.message, 'error');
@@ -303,7 +303,7 @@ $('pearson-btn').addEventListener('click', async () => {
       return;
     }
 
-    setStatus(`Found ${assignments.length} assignment(s). Syncing to Notion...`, 'info');
+    setStatus('Found ' + assignments.length + ' assignment(s). Syncing to Notion...', 'info');
 
     const syncResult = await chrome.runtime.sendMessage({
       action: 'syncToNotion',
@@ -318,7 +318,7 @@ $('pearson-btn').addEventListener('click', async () => {
     const ok = results.filter(r => r.status === 'created' || r.status === 'updated').length;
     const skipped = results.filter(r => r.status === 'skipped').length;
     const errors = results.filter(r => r.status === 'error').length;
-    setStatus(`✅ Synced ${ok} · Skipped ${skipped} · Errors ${errors}`, errors > 0 ? 'error' : 'success');
+    setStatus('Synced ' + ok + ' / Skipped ' + skipped + ' / Errors ' + errors, errors > 0 ? 'error' : 'success');
   } catch (err) {
     console.error(err);
     setStatus('Error: ' + err.message, 'error');
