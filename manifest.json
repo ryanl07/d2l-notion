@@ -1,11 +1,13 @@
 {
   "manifest_version": 3,
   "name": "D2L → Notion Sync",
-  "version": "1.0",
-  "description": "Sync Purdue Brightspace assignments to your Notion database.",
+  "version": "1.2",
+  "description": "Sync D2L Brightspace assignments to your Notion database.",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
-    "https://purdue.brightspace.com/*",
+    "https://*.brightspace.com/*",
+    "https://*.desire2learn.com/*",
+    "https://*.d2l.com/*",
     "https://api.notion.com/*"
   ],
   "action": {
@@ -17,7 +19,11 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://purdue.brightspace.com/*"],
+      "matches": [
+        "https://*.brightspace.com/*",
+        "https://*.desire2learn.com/*",
+        "https://*.d2l.com/*"
+      ],
       "js": ["content.js"]
     }
   ]
