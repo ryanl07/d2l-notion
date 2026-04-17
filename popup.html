@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <h1>D2L → Notion</h1>
+
+    <div id="main-view">
+      <button id="sync-btn" class="primary-btn">Sync Assignments</button>
+      <div id="status" class="status"></div>
+      <div id="results" class="results"></div>
+      <button id="settings-btn" class="secondary-btn">⚙️ Settings</button>
+    </div>
+
+    <div id="settings-view" class="hidden">
+      <h2>Settings</h2>
+      <label>
+        Notion API Token
+        <input type="password" id="notion-token" placeholder="secret_...">
+      </label>
+      <label>
+        Notion Database ID
+        <input type="text" id="database-id" placeholder="32-char ID">
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" id="sync-description">
+        Include Description field
+      </label>
+      <div class="btn-row">
+        <button id="save-btn" class="primary-btn">Save</button>
+        <button id="back-btn" class="secondary-btn">Back</button>
+      </div>
+      <p class="help">
+        <strong>How to get these:</strong><br>
+        1. Go to <a href="https://www.notion.so/my-integrations" target="_blank">notion.so/my-integrations</a> and create an integration to get your token.<br>
+        2. Open your Notion database, click "..." → "Connect to" → select your integration.<br>
+        3. Copy the database ID from the URL (the 32-char string after your workspace name).
+      </p>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
