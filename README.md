@@ -11,11 +11,6 @@ A browser extension that syncs assignments from **D2L Brightspace** to your **No
 - An active D2L Brightspace account
 
 ### Step 1 — Clone or Download This Repo
-
-```bash
-git clone https://github.com/YOUR_USERNAME/d2l-notion-sync.git
-```
-
 Or download the ZIP from GitHub and extract it.
 
 ### Step 2 — Set Up Your Notion Integration
