@@ -53,6 +53,76 @@ function formatWindow(w) {
   return labels[w] || '3 months';
 }
 
+function dedupePearsonAssignments(assignments) {
+  const seen = new Set();
+  return assignments.filter(a => {
+    const key = `${a.name || ''}|${a.dueDate || ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return !!a.name;
+  });
+}
+
+async function getFrameIds(tabId) {
+  const frames = await chrome.webNavigation.getAllFrames({ tabId }).catch(() => null);
+  if (!frames || frames.length === 0) return [0];
+  return frames.filter(f => !f.errorOccurred).map(f => f.frameId);
+}
+
+async function scrapePearsonFromFrames(tabId, frameIds) {
+  let assignments = [];
+  let responses = 0;
+  let errors = 0;
+
+  for (const frameId of frameIds) {
+    try {
+      const resp = await chrome.tabs.sendMessage(
+        tabId,
+        { action: 'scrapePearson' },
+        { frameId }
+      );
+      responses += 1;
+      if (resp && Array.isArray(resp.assignments) && resp.assignments.length > 0) {
+        assignments = assignments.concat(resp.assignments);
+      }
+    } catch (e) {
+      errors += 1;
+    }
+  }
+
+  return { assignments: dedupePearsonAssignments(assignments), responses, errors };
+}
+
+async function scrapePearsonAssignments(tabId) {
+  const frameIds = await getFrameIds(tabId);
+
+  let firstPass = await scrapePearsonFromFrames(tabId, frameIds);
+  if (firstPass.assignments.length > 0) return firstPass.assignments;
+
+  // If content scripts were missing (common after extension reload), inject and retry.
+  if (firstPass.responses === 0 || firstPass.errors > 0) {
+    try {
+      for (const frameId of frameIds) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId, frameIds: [frameId] },
+            files: ['content.js']
+          });
+        } catch (e) {
+          // Some frames are not injectable (cross-origin/about:blank). Ignore and continue.
+        }
+      }
+      await new Promise(r => setTimeout(r, 300));
+      const secondPass = await scrapePearsonFromFrames(tabId, frameIds);
+      return secondPass.assignments;
+    } catch (err) {
+      console.warn('[D2L→Notion] Pearson injection fallback failed:', err);
+    }
+  }
+
+  return [];
+}
+
 // ------------------------------------------------------------
 // Init: load saved settings
 // ------------------------------------------------------------
@@ -226,36 +296,7 @@ $('pearson-btn').addEventListener('click', async () => {
       return;
     }
 
-    // Get all frames in this tab — assignments may live inside an LTI iframe
-    const frames = await chrome.webNavigation.getAllFrames({ tabId: tab.id }).catch(() => null);
-    const frameIds = frames
-      ? frames.filter(f => !f.errorOccurred).map(f => f.frameId)
-      : [0];
-
-    // Ask each frame to scrape. Most will return 0 assignments; one will have them.
-    let assignments = [];
-    for (const frameId of frameIds) {
-      try {
-        const resp = await chrome.tabs.sendMessage(
-          tab.id,
-          { action: 'scrapePearson' },
-          { frameId }
-        );
-        if (resp && resp.assignments && resp.assignments.length > 0) {
-          assignments = assignments.concat(resp.assignments);
-        }
-      } catch (e) {
-        // Frame might not have our content script (e.g. about:blank or cross-origin) — skip
-      }
-    }
-
-    // Dedupe across frames
-    const seen = new Set();
-    assignments = assignments.filter(a => {
-      if (seen.has(a.name)) return false;
-      seen.add(a.name);
-      return true;
-    });
+    const assignments = await scrapePearsonAssignments(tab.id);
 
     if (assignments.length === 0) {
       setStatus('No current assignments found on this Pearson page.', 'error');
